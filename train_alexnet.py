@@ -1,79 +1,88 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[46]:
+# In[6]:
 
 
+from tqdm import tqdm
 import os
 import cv2
 import numpy as np
-import keras
 from random import randrange
 from keras.utils import to_categorical
-from keras.models import Sequential
+
+
+# In[7]:
+
+
+def get_label(path):
+   piece = os.path.basename(path).split('_')[0]
+   d = {'0': 0, 'p': 1, 'n': 2, 'b': 3, 'r': 4, 'q': 5, 'k': 6,           'P': 7, 'N': 8, 'B': 9, 'R': 10, 'Q': 11, 'K': 12}
+   return d[piece]
+
+def get_img(path):
+   return cv2.resize(cv2.imread(path), (224,224))
+
+def get_data(path_dir):
+   images = []
+   labels = []
+   for root, dirs, files in (os.walk(path_dir)):
+       for file in files:
+           if 'jpg' not in file: continue
+           path = os.path.join(root, file)
+           image = get_img(path)
+           label = get_label(path)
+           images.append(image)
+           labels.append(label)
+   images = np.array(images)/255
+   labels = to_categorical(labels, 13)
+   return images, labels
+
+
+# In[8]:
+
+
+import tensorflow as tf
+import numpy as np
+from keras.utils import to_categorical
+from sklearn.model_selection import train_test_split
+import keras
+from keras.models import Sequential,Input,Model,model_from_json
 from keras.layers import Dense, Dropout, Flatten
 from keras.layers import Conv2D, MaxPooling2D, Activation
 from keras.layers.normalization import BatchNormalization
-from keras.models import model_from_json
+from keras.layers.advanced_activations import LeakyReLU
+import cv2, os
 
 
-# In[19]:
+# In[15]:
 
 
-def train_test_split(feature_labels, size, test_size=0.2):
-    data = []
-    train_size = (1-test_size)*len(feature_labels)
-    
-    while len(data) < train_size:
-        index = randrange(len(feature_labels))
-        data.append(feature_labels.pop(index))
-    x_train = [x[0] for x in data]
-    y_train = [x[1] for x in data]
-    x_test = [x[0] for x in feature_labels]
-    y_test = [x[1] for x in feature_labels]
-    # Reshape and scale the features from 0-255 to 0.0-1.0
-    x_train = (np.array(x_train)/255).reshape(-1, size, size, 3)
-    x_test = (np.array(x_test)/255).reshape(-1, size, size, 3)
-    y_train = to_categorical(y_train)
-    y_test = to_categorical(y_test)
-    
-    return x_train, x_test, y_train, y_test
-    
-def create_train_data(train_dir, size=150):
-    feature_labels = [] # Initialize empty list of [[feature, label]]
-    
-    for file in os.listdir(train_dir):
-        label = 0 if file.split('.')[0] == 'cat' else 1
-        image = cv2.resize(cv2.imread(os.path.join(train_dir, file)), (size, size))
-        feature_labels.append([image, label])
-        
-    return train_test_split(feature_labels, size, test_size=0.2)
-    
+batch_size  = 32
+epochs      = 10
+num_classes = 13
+train_dir   = "out_medium_fix"
+size        = 227
 
 
-# In[33]:
+# In[10]:
 
 
-BATCH_SIZE     = 64
-EPOCHS_COUNT   = 20
-NUM_OF_CLASSES = 2
-TRAIN_DIR      = "classify-cats-dogs/train"
-INPUT_SIZE     = 224
+print("Loading Dataset...")
+
+x_train, y_train = get_data(train_dir)
+
+x_train, x_test, y_train, y_test = train_test_split(x_train, y_train, test_size=0.20)
+
+print("x_train shape: {}\ny_train shape: {}\nx_test.shape: {}\ny_test.shape: {}".format(x_train.shape, y_train.shape, x_test.shape, y_test.shape))
 
 
-# In[21]:
+# In[16]:
 
 
-print("Preparing the dataset...")
-x_train, x_test, y_train, y_test = create_train_data(TRAIN_DIR, INPUT_SIZE)
-
-
-# In[43]:
-
-
-print("Setting up AlexNet Architecture CNN...")
+print("\nCreating convolutional neural network...")
 model = Sequential()
-model.add(Conv2D(filters=96, kernel_size=(11,11), input_shape=(INPUT_SIZE, INPUT_SIZE, 3), padding="valid", strides=(4,4)))
+model.add(Conv2D(filters=96, kernel_size=(11,11), input_shape=(224, 224, 3), padding="valid", strides=(4,4)))
 model.add(Activation("relu"))
 model.add(MaxPooling2D(pool_size=(2,2), strides=(2,2), padding='valid'))
 model.add(BatchNormalization())
@@ -104,35 +113,40 @@ model.add(Dense(1000))
 model.add(Activation("relu"))
 model.add(Dropout(0.4))
 model.add(BatchNormalization())
-model.add(Dense(2))
+model.add(Dense(13))
 model.add(Activation('softmax'))
 
 
-# In[44]:
+# In[17]:
+
+
+model.summary()
+
+
+# In[21]:
 
 
 print("Compiling model...")
-opt = keras.optimizers.Adam(lr=0.00001)
+opt = keras.optimizers.Adam(lr=0.003)
 model.compile(loss=keras.losses.categorical_crossentropy, optimizer=opt, metrics=["accuracy"])
+
+
+# In[22]:
+
+
 print("Training model...")
-model.fit(x_train, y_train, validation_split=.25, epochs=EPOCHS_COUNT)
 
-
-# In[45]:
-
-
+model.fit(x_train, y_train, batch_size=batch_size, validation_split=.25, epochs=epochs)
 test_loss, test_acc = model.evaluate(x_test, y_test)
-print("Accuracy on test dataset: {}".format(test_acc))
-print("Loss on test dataset: {}".format(test_loss))
+print('Test accuracy:', test_acc)
+print('Test loss:', test_loss)
+print("Saving the model...")
 
 
-# In[47]:
+# In[ ]:
 
 
-model.save_weights("model.h5")
-model_json = model.to_json()
-with open("model.json", "w") as json_file:
-    json_file.write(model_json)
+
 
 
 # In[ ]:
